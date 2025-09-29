@@ -1,0 +1,58 @@
+name: Sync Fork with Upstream QMK Firmware (Preserve Workflow)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
+
+jobs:
+  sync-fork:
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM_REPO: qmk/qmk_firmware
+      UPSTREAM_BRANCH: master
+      FORK_BRANCH: master
+      PATCH_URL: https://github.com/qmk/qmk_firmware/compare/master...balub:qmk_firmware:master.patch
+      WORKFLOW_FILE: .github/workflows/syncfork.yml
+
+    steps:
+      - name: Checkout fork repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FORK_BRANCH }}
+          fetch-depth: 0
+
+      - name: Set up Git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Backup workflow file
+        run: |
+          mkdir -p /tmp/workflow-backup
+          cp "${WORKFLOW_FILE}" /tmp/workflow-backup/
+
+      - name: Add upstream remote and fetch
+        run: |
+          git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git
+          git fetch upstream
+
+      - name: Reset fork branch to upstream/master
+        run: |
+          git reset --hard upstream/${{ env.UPSTREAM_BRANCH }}
+
+      - name: Restore workflow file
+        run: |
+          cp /tmp/workflow-backup/$(basename "${WORKFLOW_FILE}") "${WORKFLOW_FILE}"
+          git add "${WORKFLOW_FILE}"
+          git diff --staged --quiet || git commit -m "Preserve custom syncfork.yml after upstream sync"
+
+      - name: Download and apply balub patch (merge, prefer our changes)
+        run: |
+          curl -L "${PATCH_URL}" -o balub.patch
+          git am -3 --keep-non-patch balub.patch || \
+          (git am --abort && git apply --3way --reject balub.patch)
+
+      - name: Push to fork
+        run: |
+          git push origin ${{ env.FORK_BRANCH }} --force
